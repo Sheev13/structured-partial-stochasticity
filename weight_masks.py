@@ -1,5 +1,6 @@
 import torch
-from typing import Tuple, List, Optional    
+from typing import Tuple, List, Optional
+
 
 def apply_mask(weights: torch.Tensor, mask: torch.Tensor, zero_magnitude: bool):
     num_samples = weights.shape[0]
@@ -13,9 +14,15 @@ def apply_mask(weights: torch.Tensor, mask: torch.Tensor, zero_magnitude: bool):
 
 
 def get_mask(
-    dim1: int, dim2: int, odd: bool, c: Optional[float] = None, minimal: bool = True, map_weights: Optional[torch.Tensor] = None
+    dim1: int,
+    dim2: int,
+    odd: bool,
+    c: Optional[float] = None,
+    minimal: bool = True,
+    map_weights: Optional[torch.Tensor] = None,
+    random_mask: bool = False,
 ):
-    zeros_mask = _get_zeros_mask(dim1, dim2, odd, minimal)
+    zeros_mask = _get_zeros_mask(dim1, dim2, odd, minimal, random_mask)
     if c is None and map_weights is None:
         c = 0.0
     if c == 0.0:
@@ -26,8 +33,8 @@ def get_mask(
         return _zeros_mask_to_nonzero(zeros_mask, map_weights) * c, zeros_mask
 
 
-def _get_zeros_mask(dim1: int, dim2: int, odd: bool, minimal: bool):
-    dim1 = dim1 - 1 # this is to ignore the bias
+def _get_zeros_mask(dim1: int, dim2: int, odd: bool, minimal: bool, random: bool = False):
+    dim1 = dim1 - 1  # this is to ignore the bias
     mindim = min(dim1, dim2)
     if minimal:
         off_diag_zeros = _get_offset_diag_zeros(mindim)
@@ -36,6 +43,10 @@ def _get_zeros_mask(dim1: int, dim2: int, odd: bool, minimal: bool):
 
     if odd:
         off_diag_zeros = off_diag_zeros.flip(0)
+        
+    if random:
+        num_zeros = (off_diag_zeros == 0.0).sum().item()
+        off_diag_zeros = _get_random_zeros_like(off_diag_zeros, num_zeros)
 
     if dim1 > dim2:
         a = torch.ones((dim1 - dim2, dim2))
@@ -47,14 +58,22 @@ def _get_zeros_mask(dim1: int, dim2: int, odd: bool, minimal: bool):
 
     else:
         mask = off_diag_zeros
-        
+
     bias_ones = torch.ones((1, dim2))
     mask = torch.cat((bias_ones, mask), dim=0)
 
     return mask
 
+def _get_random_zeros_like(m: torch.Tensor, n: int):
+    ones = torch.ones_like(m)
+    idx = torch.randperm(ones.numel())[:n]
+    flat_ones = ones.flatten()
+    flat_ones[idx] = 0.0
+    return flat_ones.view(m.size())
 
-def _zeros_mask_to_nonzero(mask: torch.Tensor, map_weights: Optional[torch.Tensor] = None):
+def _zeros_mask_to_nonzero(
+    mask: torch.Tensor, map_weights: Optional[torch.Tensor] = None
+):
     if map_weights is not None:
         nonzeros = map_weights
     else:

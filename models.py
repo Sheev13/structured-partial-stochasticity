@@ -29,6 +29,7 @@ class MeanFieldLayer(nn.Module):
         minimal_mask: bool = True,
         c: Optional[float] = None,
         map_weights: Optional[int] = None,
+        random_mask: bool = False,
     ):
         super().__init__()
         self.input_dim = input_dim
@@ -38,6 +39,7 @@ class MeanFieldLayer(nn.Module):
         self.asymmetric_weights = asymmetric_weights
         self.odd = odd
         self.minimal_mask = minimal_mask
+        self.random_mask = random_mask
         if c is not None:
             self.c = c.detach()
         else:
@@ -66,6 +68,7 @@ class MeanFieldLayer(nn.Module):
                 self.c,
                 self.minimal_mask,
                 map_weights,
+                self.random_mask,
             )
 
     @property
@@ -75,20 +78,27 @@ class MeanFieldLayer(nn.Module):
     @property
     def q(self):
         return torch.distributions.Normal(self.w_mu, self.w_std)
-            
+
     def weights_mask(self, c: Optional[nn.Parameter] = None):
         if c is None or self.init_weights_mask.abs().max().abs().max() == 0:
             return self.init_weights_mask
         else:
             return (self.init_weights_mask / self.init_weights_mask.abs().max()) * c
-        
+
     def kl(self):
         if self.asymmetric_weights:
-            return (torch.distributions.kl.kl_divergence(self.q, self.p) * self.kl_mask).sum()
+            return (
+                torch.distributions.kl.kl_divergence(self.q, self.p) * self.kl_mask
+            ).sum()
         else:
             return torch.distributions.kl.kl_divergence(self.q, self.p).sum()
 
-    def forward(self, x: torch.Tensor, variational: bool = False, c: Optional[nn.Parameter] = None):
+    def forward(
+        self,
+        x: torch.Tensor,
+        variational: bool = False,
+        c: Optional[nn.Parameter] = None,
+    ):
         assert (
             len(x.shape) == 3
         ), "x should be shape (num_samples, batch_size, input_dim)."
@@ -133,6 +143,7 @@ class MeanFieldBNN(nn.Module):
         c: Optional[float] = None,
         map_weights: Optional[List[torch.Tensor]] = None,
         train_c: bool = False,
+        random_mask: bool = False,
     ):
         super().__init__()
 
@@ -143,12 +154,13 @@ class MeanFieldBNN(nn.Module):
         self.scale_prior = scale_prior
         self.asymmetric_weights = asymmetric_weights
         self.minimal_mask = minimal_mask
+        self.random_mask = random_mask
         if c is not None:
             self.c = nn.Parameter(torch.tensor(c), requires_grad=train_c)
         else:
             self.c = None
         self.train_c = train_c
-        
+
         if map_weights is None:
             map_weights = [None] * (len(dims) - 1)
 
@@ -165,6 +177,7 @@ class MeanFieldBNN(nn.Module):
                     self.minimal_mask,
                     self.c,
                     map_weights[i],
+                    self.random_mask,
                 )
             )
         self.layers.append(
@@ -179,6 +192,7 @@ class MeanFieldBNN(nn.Module):
                 self.minimal_mask,
                 self.c,
                 map_weights[len(dims) - 2],
+                self.random_mask,
             )
         )
 
@@ -286,10 +300,10 @@ class MeanFieldBNN(nn.Module):
                 variational,
                 num_samples,
             )
-            rmse = ((test_preds - y_test) ** 2).mean(1).sqrt().mean().detach()
+            mean_pred_rmse = ((test_preds.mean(0) - y_test.squeeze(0)) ** 2).mean(0).sqrt().mean().detach()
             mlpp = self._mean_log_posterior_predictive(test_preds, y_test).detach()
 
-        return rmse, mlpp
+        return mean_pred_rmse, mlpp
 
     def _mean_log_posterior_predictive(
         self, preds: torch.Tensor, y_test: torch.Tensor

@@ -16,6 +16,9 @@ def uci_to_normalised_ttsplit(
 
     X = torch.tensor(X.values)
     y = torch.tensor(y.values)
+    
+    if len(y.shape) < 2:
+        y = y.unsqueeze(-1)
 
     X = (X - X.mean(0)) / X.std(0)
     y = (y - y.mean(0)) / y.std(0)
